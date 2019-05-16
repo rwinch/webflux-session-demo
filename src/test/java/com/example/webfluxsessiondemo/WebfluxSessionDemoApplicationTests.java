@@ -74,7 +74,7 @@ public class WebfluxSessionDemoApplicationTests {
     @SneakyThrows
     public void contextLoads() {
         Random random = new Random();
-        for (int i = 0; i < 300; i++) {
+        for (int i = 0; i < 1000; i++) {
             System.out.println("\nTest\n");
             String nickName = String.valueOf(random.nextLong());
             updateUser(nickName);
