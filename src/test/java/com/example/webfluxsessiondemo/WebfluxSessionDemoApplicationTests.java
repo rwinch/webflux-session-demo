@@ -1,7 +1,7 @@
 package com.example.webfluxsessiondemo;
 
+import com.example.webfluxsessiondemo.controller.UserController;
 import com.example.webfluxsessiondemo.model.User;
-import com.example.webfluxsessiondemo.repo.UserRepo;
 import lombok.SneakyThrows;
 import org.hamcrest.Matchers;
 import org.junit.Before;
@@ -9,16 +9,20 @@ import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.http.HttpCookie;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseCookie;
 import org.springframework.test.context.junit4.SpringRunner;
 import org.springframework.test.web.reactive.server.WebTestClient;
-import org.springframework.util.LinkedMultiValueMap;
-import org.springframework.util.MultiValueMap;
+import org.springframework.web.reactive.function.client.ClientRequest;
+import org.springframework.web.reactive.function.client.ClientResponse;
+import org.springframework.web.reactive.function.client.ExchangeFilterFunction;
+import org.springframework.web.reactive.function.client.ExchangeFunction;
 import reactor.core.publisher.Mono;
 
+import java.util.List;
+import java.util.Map;
 import java.util.Random;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.stream.Collectors;
 
 @RunWith(SpringRunner.class)
@@ -28,52 +32,14 @@ public class WebfluxSessionDemoApplicationTests {
     @Autowired
     private WebTestClient webTestClient;
 
-    private MultiValueMap<String, ResponseCookie> cookieStore = new LinkedMultiValueMap<>();
-
     @Autowired
-    private UserRepo userRepo;
+    private UserController userController;
 
     @Before
     public void setUp() throws Exception {
         webTestClient = webTestClient.mutate()
-                .filter((clientRequest, exchangeFunction) ->
-                        exchangeFunction.exchange(clientRequest)
-                                .doOnNext(clientResponse -> {
-                                    MultiValueMap<String, ResponseCookie> cookies = clientResponse.cookies();
-                                    cookieStore.putAll(cookies);
-                                })
-                )
+                .filter(new CookieExchangeFilterFunction())
                 .build();
-        login();
-        configCookies();
-    }
-
-    private void configCookies() {
-        webTestClient = webTestClient.mutate()
-                .defaultCookies(stringStringMultiValueMap -> {
-                    cookieStore.forEach((name, responseCookies) -> {
-                        stringStringMultiValueMap.put(
-                                name,
-                                responseCookies
-                                        .stream()
-                                        .map(HttpCookie::getValue)
-                                        .collect(Collectors.toList())
-                        );
-                    });
-                })
-                .build();
-    }
-
-    private WebTestClient.BodySpec<String, ?> login() {
-        return webTestClient.post()
-                .uri("/login")
-                .contentType(MediaType.APPLICATION_FORM_URLENCODED)
-                .syncBody("username=test&password=123456")
-                .exchange()
-                .expectStatus()
-                .isFound()
-                .expectBody(String.class)
-                ;
     }
 
     private WebTestClient.BodySpec<User, ?> me() {
@@ -90,6 +56,8 @@ public class WebfluxSessionDemoApplicationTests {
     private WebTestClient.BodySpec<String, ?> updateUser(String nickName) {
         User request = new User();
         request.setNickName(nickName);
+        request.setId("id");
+        request.setUserName("test");
         return webTestClient.put()
                 .uri("/user/update")
                 .accept(MediaType.APPLICATION_JSON_UTF8)
@@ -107,14 +75,35 @@ public class WebfluxSessionDemoApplicationTests {
     public void contextLoads() {
         Random random = new Random();
         for (int i = 0; i < 300; i++) {
+            System.out.println("\nTest\n");
             String nickName = String.valueOf(random.nextLong());
             updateUser(nickName);
-            configCookies();
-            String currentNickName = userRepo.getByUserName("test").getNickName();
+            String currentNickName = userController.getNickname();
             assert nickName.equals(currentNickName);
             me().value(Matchers.hasProperty("nickName", Matchers.equalTo(currentNickName)))
             ;
         }
     }
 
+    static class CookieExchangeFilterFunction implements ExchangeFilterFunction {
+        private Map<String, List<ResponseCookie>> cookieStore = new ConcurrentHashMap<>();
+
+        @Override
+        public Mono<ClientResponse> filter(ClientRequest clientRequest,
+                ExchangeFunction exchange) {
+            return exchange
+                .exchange(withCookies(clientRequest))
+                .doOnNext(clientResponse -> cookieStore.putAll(clientResponse.cookies()));
+        }
+
+        private ClientRequest withCookies(ClientRequest clientRequest) {
+            return ClientRequest.from(clientRequest).cookies(cookies -> {
+                        cookieStore.forEach((k, v) -> {
+                            List<String> values = v.stream().map(c -> c.getValue()).collect(Collectors.toList());
+                            cookies.put(k, values);
+                        });
+                    })
+                    .build();
+        }
+    }
 }
